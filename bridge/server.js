@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const pty = require('node-pty');
 const express = require('express');
 const { WebSocketServer } = require('ws');
+const { scanExternalSessions, formatRunningTime, SCAN_INTERVAL } = require('./session-monitor');
+const { execFile } = require('child_process');
 
 const PORT = process.env.PORT || 3000;
 const BIND_ADDR = '0.0.0.0';
@@ -26,6 +28,13 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), sessions: sessions.size }));
+app.get('/api/external-sessions', (req, res) => {
+  const external = scanExternalSessions(sessions);
+  res.json({ sessions: external.map(s => ({
+    ...s,
+    runningTimeFormatted: formatRunningTime(s.runningTime),
+  }))});
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -373,11 +382,235 @@ wss.on('connection', (ws, req) => {
         sendToSession(sessionId, { type: 'status', state: 'idle' });
         sendToSession(sessionId, { type: 'ready_for_input' });
         break;
+
+      case 'inject_permission':
+        // 向外部 Claude 进程注入按键（如 y/n/自定义文本）
+        if (!data.pid || !data.text) break;
+        injectKeystroke(data.pid, data.text, (err, result) => {
+          sendToSession(sessionId, {
+            type: 'inject_result',
+            pid: data.pid,
+            text: data.text,
+            success: !err,
+            message: err ? err.message : result,
+          });
+        });
+        break;
+
+      case 'take_over_session':
+        // 接管外部 Claude 会话：在 bridge 中恢复该会话
+        if (!data.externalSessionId) break;
+        takeOverSession(sessionId, data.externalSessionId);
+        break;
     }
   });
 
   ws.on('close', () => { const s = sessions.get(sessionId); if (s) s.ws = null; });
 });
+
+// ---- External Session Injection ----
+
+/**
+ * 向外部进程注入按键输入
+ * 优先使用 inject-keystroke.exe（C 编译版本），
+ * 如果不可用则回退到 PowerShell 脚本。
+ */
+function injectKeystroke(pid, text, callback) {
+  const exePath = path.join(__dirname, 'inject-keystroke.exe');
+  const ps1Path = path.join(__dirname, 'inject-keystroke.ps1');
+
+  // 检查是否有编译好的 C 版本
+  if (fs.existsSync(exePath)) {
+    execFile(exePath, [String(pid), text], { timeout: 10000 }, (err, stdout, stderr) => {
+      if (err) {
+        callback(err, stderr || stdout);
+      } else {
+        callback(null, stdout.trim());
+      }
+    });
+  } else if (fs.existsSync(ps1Path)) {
+    // 回退到 PowerShell
+    const psCmd = `powershell.exe -ExecutionPolicy Bypass -File "${ps1Path}" -Pid ${pid} -Text "${text.replace(/"/g, '\\"')}"`;
+    execFile('powershell.exe', [
+      '-ExecutionPolicy', 'Bypass',
+      '-File', ps1Path,
+      '-Pid', String(pid),
+      '-Text', text,
+    ], { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) {
+        callback(err, stderr || stdout);
+      } else {
+        callback(null, stdout.trim());
+      }
+    });
+  } else {
+    callback(new Error('No inject tool available (neither .exe nor .ps1 found)'), null);
+  }
+}
+
+/**
+ * 接管外部会话：在 bridge 内用 --resume 恢复该 session
+ */
+function takeOverSession(bridgeSessionId, externalSessionId) {
+  const bridgeSession = sessions.get(bridgeSessionId);
+  if (!bridgeSession) return;
+
+  // 先干掉旧的 PTY（如果有）
+  if (bridgeSession.pty) {
+    try { bridgeSession.pty.kill(); } catch {}
+  }
+
+  // 用 claude --resume 创建新 PTY
+  const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
+  const args = process.platform === 'win32'
+    ? ['/c', `claude --resume ${externalSessionId} --bare`]
+    : ['-c', `claude --resume ${externalSessionId} --bare`];
+
+  const proc = pty.spawn(shell, args, {
+    name: 'xterm-256color', cols: 120, rows: 35,
+    cwd: process.cwd(),
+    env: { ...process.env, TERM: 'xterm-256color' },
+  });
+
+  bridgeSession.pty = proc;
+  bridgeSession.state = 'processing';
+  bridgeSession.inAnswer = false;
+  bridgeSession.permDetected = false;
+  bridgeSession.permAnswered = false;
+  bridgeSession.cleanBuf = '';
+  bridgeSession.thinkingAccum = '';
+  bridgeSession.answerAccum = '';
+
+  // 重新绑定 PTY 数据事件（复用 createSession 中的逻辑）
+  proc.onData((data) => {
+    const clean = stripAnsi(data);
+    if (!clean) return;
+    bridgeSession.cleanBuf += clean;
+
+    if (!bridgeSession.permDetected && detectPermission(bridgeSession.cleanBuf)) {
+      bridgeSession.permDetected = true;
+      bridgeSession.state = 'awaiting_permission';
+      const permText = bridgeSession.cleanBuf.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().slice(-400);
+      sendToSession(bridgeSessionId, { type: 'need_permission', text: permText });
+      const title = 'Claude 需要确认';
+      const summary = permText.slice(0, 200);
+      sendBarkNotification(title, summary, 'timeSensitive', 'alarm');
+      bridgeSession.cleanBuf = '';
+      bridgeSession.thinkingAccum = '';
+      bridgeSession.answerAccum = '';
+      return;
+    }
+
+    const parts = bridgeSession.cleanBuf.split('\n');
+    bridgeSession.cleanBuf = parts.pop() || '';
+
+    for (const part of parts) {
+      const segments = part.split('\r');
+      let line = '';
+      for (let i = segments.length - 1; i >= 0; i--) {
+        const s = segments[i].trim();
+        if (s) { line = s; break; }
+      }
+      if (!line) continue;
+      if (isCompletelyUseless(line)) continue;
+      if (/^[─-╿▀-▟]{2,}/.test(line)) continue;
+      if (/^[·$\$$\[\]+\s]+$/.test(line)) continue;
+
+      if (isThinkingStatusLine(line)) {
+        const label = extractStatusLabel(line);
+        sendToSession(bridgeSessionId, { type: 'output_status', text: label });
+        continue;
+      }
+
+      if (/^●\s?/.test(line)) {
+        flushThinking(bridgeSession);
+        bridgeSession.inAnswer = true;
+        const answerText = line.replace(/^●\s?/, '');
+        if (answerText) {
+          bridgeSession.answerAccum += answerText + '\n';
+        }
+        continue;
+      }
+
+      if (/^❯\s/.test(line)) {
+        flushThinking(bridgeSession);
+        flushAnswer(bridgeSession);
+        bridgeSession.inAnswer = false;
+        bridgeSession.answerAccum = '❯ ' + line.replace(/^❯\s?/, '') + '\n';
+        flushAnswer(bridgeSession);
+        continue;
+      }
+
+      if (bridgeSession.inAnswer) {
+        bridgeSession.answerAccum += line + '\n';
+      } else {
+        bridgeSession.thinkingAccum += line + '\n';
+      }
+    }
+
+    if (bridgeSession.flushTimer) clearTimeout(bridgeSession.flushTimer);
+    bridgeSession.flushTimer = setTimeout(() => {
+      flushThinking(bridgeSession);
+      flushAnswer(bridgeSession);
+    }, 200);
+
+    if (bridgeSession.idleTimer) clearTimeout(bridgeSession.idleTimer);
+    bridgeSession.idleTimer = setTimeout(() => {
+      flushThinking(bridgeSession);
+      flushAnswer(bridgeSession);
+      if (bridgeSession.state === 'processing') {
+        bridgeSession.state = 'idle';
+        bridgeSession.inAnswer = false;
+        sendToSession(bridgeSessionId, { type: 'output_status', text: '' });
+        sendToSession(bridgeSessionId, { type: 'ready_for_input' });
+      }
+    }, 1500);
+  });
+
+  proc.onExit(({ exitCode }) => {
+    flushThinking(bridgeSession);
+    flushAnswer(bridgeSession);
+    bridgeSession.state = 'done';
+    sendToSession(bridgeSessionId, { type: 'session_ended', code: exitCode });
+  });
+
+  sendToSession(bridgeSessionId, {
+    type: 'take_over_result',
+    sessionId: externalSessionId,
+    success: true,
+    message: `已接管会话 ${externalSessionId.slice(0, 8)}...`,
+  });
+}
+
+// ---- External Session Scanner ----
+
+/**
+ * 定期扫描外部 Claude 会话并推送给所有连接的客户端
+ */
+function broadcastExternalSessions() {
+  const external = scanExternalSessions(sessions);
+  const payload = {
+    type: 'external_sessions_update',
+    sessions: external.map(s => ({
+      pid: s.pid,
+      sessionId: s.sessionId,
+      cwd: s.cwd,
+      status: s.status,
+      runningTime: s.runningTime,
+      runningTimeFormatted: formatRunningTime(s.runningTime),
+      version: s.version,
+      name: s.name,
+    })),
+  };
+
+  for (const [, s] of sessions) {
+    if (s.ws && s.ws.readyState === 1) {
+      try { s.ws.send(JSON.stringify(payload)); } catch {}
+    }
+  }
+}
+
+const externalScanTimer = setInterval(broadcastExternalSessions, SCAN_INTERVAL);
 
 // ---- Cleanup ----
 setInterval(() => {
@@ -391,6 +624,7 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 process.on('SIGINT', () => {
+  clearInterval(externalScanTimer);
   for (const [, s] of sessions) try { s.pty.kill(); } catch {}
   server.close(() => process.exit(0));
 });

@@ -142,7 +142,7 @@ WebSocket 协议
 关联服务
 --------
   - Tailscale VPN    提供安全远程访问 (IP: 100.105.91.55)
-  - Bark App         iPhone 推送通知 (Key: KmoqoxbnTRzWPoLztRoUtj)
+  - Bark App         iPhone 推送通知 (Key: 见 bridge/server.js 中 BARK_KEY)
   - Claude Code CLI  必须在 PATH 中可执行 (claude --bare)
 
 

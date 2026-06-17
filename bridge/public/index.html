@@ -211,6 +211,72 @@ body::after {
   border: 1px solid var(--red) !important;
 }
 
+/* ===== EXTERNAL SESSIONS PANEL ===== */
+#ext-sessions-panel {
+  display: none;
+  margin: 4px 12px 8px;
+  background: #0e1218;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  flex-shrink: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+#ext-sessions-panel.active { display: block; }
+#ext-sessions-panel .ext-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px; color: var(--purple); margin-bottom: 6px;
+  letter-spacing: 1px; text-transform: uppercase;
+}
+#ext-sessions-panel .ext-empty {
+  font-size: 10px; color: var(--text-dim);
+  text-align: center; padding: 6px;
+}
+#ext-sessions-panel .ext-session {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px; margin-bottom: 4px;
+  background: #0a0c0e; border-radius: 6px;
+  border: 1px solid #1a1a28; gap: 6px;
+  flex-wrap: wrap;
+}
+#ext-sessions-panel .ext-session.warning {
+  border-color: var(--red);
+  box-shadow: 0 0 8px rgba(248,81,73,0.1);
+}
+#ext-sessions-panel .ext-info {
+  flex: 1; min-width: 0;
+}
+#ext-sessions-panel .ext-info .ext-cwd {
+  font-size: 9px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+#ext-sessions-panel .ext-info .ext-meta {
+  font-size: 8px; color: #3a4050;
+}
+#ext-sessions-panel .ext-info .ext-meta span {
+  margin-right: 8px;
+}
+#ext-sessions-panel .ext-actions {
+  display: flex; gap: 4px; flex-shrink: 0;
+}
+#ext-sessions-panel .ext-actions button {
+  padding: 5px 8px; border: none; border-radius: 4px;
+  font-family: 'Press Start 2P', monospace; font-size: 6px;
+  cursor: pointer; letter-spacing: 1px;
+}
+#ext-sessions-panel .ext-actions button:active { transform: scale(0.9); }
+.ext-btn-allow {
+  background: #1a3a1a; color: var(--green); border: 1px solid var(--green);
+}
+.ext-btn-deny {
+  background: #2a1a1a; color: var(--red); border: 1px solid var(--red);
+}
+.ext-btn-takeover {
+  background: #1a1a2a; color: var(--cyan); border: 1px solid var(--cyan);
+}
+
 /* ===== INPUT DECK ===== */
 #input-deck {
   display: flex; align-items: center; gap: 6px;
@@ -226,6 +292,7 @@ body::after {
   -webkit-appearance: none;
 }
 #input-deck input:focus { border-color: var(--amber); box-shadow: 0 0 0 2px rgba(232,184,48,0.1); }
+#input-deck input.warn-mode { border-color: var(--red); box-shadow: 0 0 0 2px rgba(248,81,73,0.2); color: var(--red); }
 #input-deck input::placeholder { color: #3a3a4a; }
 #btn-send {
   width: 42px; height: 42px; border-radius: 8px;
@@ -313,6 +380,13 @@ body::after {
     </div>
   </div>
 
+  <!-- EXTERNAL SESSIONS PANEL -->
+  <div id="ext-sessions-panel">
+    <div class="ext-title">电脑活跃会话</div>
+    <div class="ext-empty" id="ext-empty">扫描中...</div>
+    <div id="ext-list"></div>
+  </div>
+
   <!-- INPUT DECK -->
   <div id="input-deck">
     <input type="text" id="msg-input" placeholder="输入指令..." autofocus autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
@@ -341,6 +415,9 @@ const permBody = document.getElementById('perm-body');
 const welcomeEl = document.getElementById('welcome-overlay');
 const statusLine = document.getElementById('status-line');
 const statusCompact = document.getElementById('status-compact');
+const extSessionsPanel = document.getElementById('ext-sessions-panel');
+const extList = document.getElementById('ext-list');
+const extEmpty = document.getElementById('ext-empty');
 
 // Track current blocks so we can replace them
 let currentThinkBlock = null;
@@ -407,6 +484,24 @@ function handleMessage(msg) {
       appendDiv('─── 会话结束 ───', 'answer-line');
       btnSend.disabled = true;
       setStatusLine('');
+      break;
+
+    case 'external_sessions_update':
+      renderExternalSessions(msg.sessions);
+      break;
+
+    case 'inject_result':
+      appendDiv((msg.success ? '✓ ' : '✕ ') + '注入' + msg.text + ' → PID ' + msg.pid + ': ' + msg.message, 'answer-line');
+      break;
+
+    case 'take_over_result':
+      if (msg.success) {
+        appendDiv('✓ ' + msg.message, 'answer-line');
+        btnSend.disabled = false;
+        setState('idle');
+      } else {
+        appendDiv('✕ 接管失败: ' + msg.message, 'answer-line');
+      }
       break;
   }
 }
@@ -611,6 +706,132 @@ inputEl.addEventListener('input', () => {
 
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && inputEl.value.trim()) { e.preventDefault(); sendMessage(); }
+});
+
+// ===== EXTERNAL SESSIONS =====
+
+let externalSessions = [];
+
+function renderExternalSessions(sessions) {
+  externalSessions = sessions || [];
+  extList.innerHTML = '';
+
+  if (!externalSessions.length) {
+    extEmpty.textContent = '无活跃的外部 Claude 会话';
+    extEmpty.style.display = 'block';
+    extSessionsPanel.classList.add('active');
+    return;
+  }
+
+  extEmpty.style.display = 'none';
+  extSessionsPanel.classList.add('active');
+
+  for (const s of externalSessions) {
+    const div = document.createElement('div');
+    div.className = 'ext-session';
+    if (s.status === 'busy') div.classList.add('warning');
+
+    // 提取简短的项目名
+    let projectName = s.cwd.split('\\').pop() || s.cwd;
+    if (s.name) projectName = s.name;
+
+    const info = document.createElement('div');
+    info.className = 'ext-info';
+    info.innerHTML =
+      '<div class="ext-cwd">' + escapeHtml(projectName) + '</div>' +
+      '<div class="ext-meta">' +
+        '<span>PID ' + s.pid + '</span>' +
+        '<span>' + escapeHtml(s.status || 'unknown') + '</span>' +
+        '<span>' + (s.runningTimeFormatted || '') + '</span>' +
+      '</div>';
+
+    const actions = document.createElement('div');
+    actions.className = 'ext-actions';
+
+    // 允许按钮
+    const btnAllow = document.createElement('button');
+    btnAllow.textContent = '允许';
+    btnAllow.className = 'ext-btn-allow';
+    btnAllow.onclick = function () {
+      injectKeystrokeToExternal(s.pid, 'y');
+    };
+
+    // 拒绝按钮
+    const btnDeny = document.createElement('button');
+    btnDeny.textContent = '拒绝';
+    btnDeny.className = 'ext-btn-deny';
+    btnDeny.onclick = function () {
+      injectKeystrokeToExternal(s.pid, 'n');
+    };
+
+    // 接管按钮
+    const btnTakeover = document.createElement('button');
+    btnTakeover.textContent = '接管';
+    btnTakeover.className = 'ext-btn-takeover';
+    btnTakeover.onclick = function () {
+      takeOverExternalSession(s.sessionId);
+    };
+
+    actions.appendChild(btnAllow);
+    actions.appendChild(btnDeny);
+    actions.appendChild(btnTakeover);
+
+    div.appendChild(info);
+    div.appendChild(actions);
+    extList.appendChild(div);
+  }
+}
+
+function injectKeystrokeToExternal(pid, text) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'inject_permission', pid: pid, text: text }));
+  appendDiv('→ 向 PID ' + pid + ' 发送: ' + text, 'cmd-line');
+
+  // 将输入框切换为"注入模式"，方便继续输入文本
+  inputEl.placeholder = '输入要发送给 PID ' + pid + ' 的文本...';
+  inputEl.classList.add('warn-mode');
+  // 临时修改发送行为
+  inputEl._injectPid = pid;
+}
+
+function takeOverExternalSession(externalSessionId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!confirm('确认接管会话 ' + externalSessionId.slice(0, 8) + '... 吗？\n\n接管后可在手机上继续对话。')) return;
+  ws.send(JSON.stringify({ type: 'take_over_session', externalSessionId: externalSessionId }));
+  appendDiv('→ 正在接管会话 ' + externalSessionId.slice(0, 8) + '...', 'cmd-line');
+  btnSend.disabled = true;
+  setState('processing');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Override sendMessage to support inject mode
+const originalSendMessage = sendMessage;
+sendMessage = function() {
+  const text = inputEl.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  // Inject mode: send keystrokes to external process
+  if (inputEl._injectPid) {
+    injectKeystrokeToExternal(inputEl._injectPid, text);
+    inputEl.value = '';
+    return;
+  }
+
+  originalSendMessage();
+};
+
+// Reset inject mode when input is cleared
+inputEl.addEventListener('input', function() {
+  if (!inputEl.value.trim() && inputEl._injectPid) {
+    delete inputEl._injectPid;
+    inputEl.placeholder = '输入指令...';
+    inputEl.classList.remove('warn-mode');
+  }
 });
 
 // ===== INIT =====
