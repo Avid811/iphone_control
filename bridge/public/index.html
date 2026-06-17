@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>Claude 掌机</title>
+<style>
+/* ============================================
+   Claude 掌機 — iPhone Retro Console  v4
+   ============================================ */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0a0a0a;
+  --screen: #0d1112;
+  --frame: #161620;
+  --border: #252540;
+  --text: #b8c0c8;
+  --text-dim: #586068;
+  --amber: #e8b830;
+  --green: #3fb950;
+  --cyan: #58a6ff;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html, body {
+  height: 100%;
+  font-family: 'SF Mono', 'Courier New', 'Cascadia Code', monospace;
+  background: #000;
+  color: var(--text);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: none;
+  font-size: 13px;
+}
+
+/* --- CRT Scanlines overlay --- */
+body::after {
+  content: '';
+  position: fixed; top:0;left:0;right:0;bottom:0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+  pointer-events: none; z-index: 999;
+}
+
+/* --- Console Frame --- */
+#console {
+  display: flex; flex-direction: column;
+  height: 100%; max-width: 440px; margin: 0 auto;
+  background: var(--bg);
+  border-left: 2px solid #1a1a28;
+  border-right: 2px solid #1a1a28;
+  position: relative;
+}
+
+/* ===== STATUS BAR ===== */
+#status-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: calc(10px + var(--safe-top)) 14px 8px;
+  background: var(--frame);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0; gap: 10px;
+}
+#status-bar .brand {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px; color: var(--amber); letter-spacing: 2px;
+  text-shadow: 0 0 8px rgba(232,184,48,0.4);
+}
+#status-bar .info {
+  font-size: 10px; color: var(--text-dim);
+  display: flex; align-items: center; gap: 10px;
+}
+#state-led {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-dim); flex-shrink: 0;
+  transition: all 0.3s;
+}
+#state-led.idle       { background: var(--green); box-shadow: 0 0 6px var(--green); }
+#state-led.processing { background: var(--amber); box-shadow: 0 0 6px var(--amber); animation: blink 0.8s infinite; }
+#state-led.awaiting_permission { background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink-fast 0.4s infinite; }
+#state-led.done       { background: var(--text-dim); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+@keyframes blink-fast { 0%,100%{opacity:1} 50%{opacity:0.1} }
+
+/* ===== SCREEN ===== */
+#screen-wrap {
+  flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: var(--screen); position: relative;
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.5);
+}
+#screen {
+  padding: 10px 12px;
+  font-family: 'SF Mono', 'Courier New', monospace;
+  font-size: 12px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--text); min-height: 100%;
+}
+
+/* ===== USER COMMAND BLOCK ===== */
+.cmd-block {
+  margin: 6px 0 2px;
+}
+.cmd-block .cmd-line {
+  color: var(--cyan);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* ===== ANSWER BLOCK (visible, highlighted) ===== */
+.answer-block {
+  margin: 2px 0 6px;
+}
+.answer-block .answer-line {
+  color: #e8e8e8;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+/* ===== THINKING BLOCK (collapsed by default) ===== */
+.think-block {
+  margin: 2px 0;
+  border-left: 2px solid #1a1a28;
+  padding-left: 8px;
+}
+.think-toggle {
+  display: inline-block;
+  font-size: 10px; color: #4a5568; cursor: pointer;
+  padding: 3px 8px; margin: 2px 0;
+  border: 1px solid #1a1a28; border-radius: 4px;
+  background: transparent;
+  font-family: 'SF Mono', 'Courier New', monospace;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none;
+}
+.think-toggle:active { background: #1a1a28; color: #6a7a8a; }
+.think-content {
+  display: none;
+  padding: 2px 0;
+}
+.think-content.open {
+  display: block;
+}
+.think-content .think-line {
+  color: #4a5568;
+  font-style: italic;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ===== STATUS LINE (bottom) ===== */
+#status-line {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; padding: 4px 14px;
+  min-height: 28px; line-height: 1.4;
+  font-family: 'SF Mono', 'Courier New', monospace;
+  flex-shrink: 0;
+  background: #0a0d0f;
+  border-top: 1px solid #111118;
+}
+#status-compact {
+  color: #5a6570; font-style: italic; white-space: nowrap;
+  display: flex; align-items: center; gap: 5px;
+}
+#status-compact .dot { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--amber); animation: pulse-dot 1.2s infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:0.3} 50%{opacity:1} }
+#status-line.no-text { visibility: hidden; }
+
+/* ===== PERMISSION DIALOG ===== */
+#perm-dialog {
+  display: none;
+  margin: 8px 12px;
+  background: #1a1a15;
+  border: 2px solid var(--amber);
+  border-radius: 8px;
+  padding: 10px 12px;
+  flex-shrink: 0;
+  animation: dialog-in 0.3s ease-out;
+  box-shadow: 0 0 20px rgba(232,184,48,0.15);
+}
+#perm-dialog.active { display: block; }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+#perm-dialog .perm-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px; color: var(--amber); margin-bottom: 6px;
+  text-shadow: 0 0 6px rgba(232,184,48,0.3); letter-spacing: 1px;
+}
+#perm-dialog .perm-body {
+  font-size: 11px; color: var(--text-dim); margin-bottom: 8px;
+  max-height: 70px; overflow-y: auto; line-height: 1.4;
+  font-family: 'SF Mono', 'Courier New', monospace;
+}
+#perm-dialog .perm-actions { display: flex; gap: 8px; }
+#perm-dialog .perm-actions button {
+  flex: 1; padding: 10px 0; border: none; border-radius: 6px;
+  font-family: 'Press Start 2P', monospace; font-size: 9px;
+  cursor: pointer; transition: all 0.1s; letter-spacing: 1px;
+}
+#perm-dialog .perm-actions button:active { transform: scale(0.94); }
+#btn-allow {
+  background: #1a3a1a; color: var(--green);
+  border: 1px solid var(--green) !important;
+}
+#btn-deny {
+  background: #2a1a1a; color: var(--red);
+  border: 1px solid var(--red) !important;
+}
+
+/* ===== INPUT DECK ===== */
+#input-deck {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px calc(6px + var(--safe-bottom));
+  background: var(--frame);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#input-deck input {
+  flex: 1; background: #0a0c0e; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 10px 12px; font-size: 13px;
+  font-family: 'SF Mono', 'Courier New', monospace; outline: none;
+  -webkit-appearance: none;
+}
+#input-deck input:focus { border-color: var(--amber); box-shadow: 0 0 0 2px rgba(232,184,48,0.1); }
+#input-deck input::placeholder { color: #3a3a4a; }
+#btn-send {
+  width: 42px; height: 42px; border-radius: 8px;
+  border: 1px solid var(--amber); background: #1a1a10;
+  color: var(--amber); font-size: 16px; cursor: pointer;
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-family: 'Press Start 2P', monospace; font-size: 10px;
+}
+#btn-send:active { background: var(--amber); color: #000; transform: scale(0.94); }
+#btn-send:disabled { border-color: var(--border); color: #2a2a3a; box-shadow: none; cursor: not-allowed; }
+#btn-cancel {
+  display: none; width: 36px; height: 36px; border-radius: 8px;
+  border: 1px solid var(--red); background: transparent;
+  color: var(--red); font-size: 12px; cursor: pointer;
+  flex-shrink: 0; align-items: center; justify-content: center;
+  font-family: 'Press Start 2P', monospace;
+}
+#btn-cancel.visible { display: flex; }
+#btn-cancel:active { background: var(--red); color: #fff; }
+
+/* ===== WELCOME ===== */
+#welcome-overlay {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; pointer-events: none; z-index: 2;
+  background: radial-gradient(ellipse at center, rgba(232,184,48,0.03) 0%, transparent 70%);
+}
+#welcome-overlay .logo {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 14px; color: var(--amber); margin-bottom: 16px;
+  letter-spacing: 4px;
+  text-shadow: 0 0 20px rgba(232,184,48,0.5), 0 0 40px rgba(232,184,48,0.2);
+}
+#welcome-overlay .subtitle {
+  font-size: 10px; color: var(--text-dim); line-height: 1.8;
+  font-family: 'SF Mono', 'Courier New', monospace;
+}
+#welcome-overlay .subtitle span { color: var(--cyan); }
+#welcome-overlay .subtitle b { color: var(--green); }
+
+/* ===== SCROLLBAR ===== */
+#screen-wrap::-webkit-scrollbar { width: 4px; }
+#screen-wrap::-webkit-scrollbar-track { background: transparent; }
+#screen-wrap::-webkit-scrollbar-thumb { background: #1a1a28; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div id="console">
+
+  <!-- STATUS BAR -->
+  <div id="status-bar">
+    <span class="brand">CLAUDE 掌機</span>
+    <span class="info">
+      <span id="state-label">就绪</span>
+      <span id="state-led" class="idle"></span>
+    </span>
+  </div>
+
+  <!-- SCREEN -->
+  <div id="screen-wrap">
+    <div id="screen"></div>
+    <div id="welcome-overlay">
+      <div class="logo">CLAUDE 掌機</div>
+      <div class="subtitle">
+        <span>▸</span> 远程操控 Windows Claude Code<br>
+        <span>▸</span> 输入指令开始对话<br>
+        <span>▸</span> 权限请求时会弹出<b>[允许/拒绝]</b>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATUS LINE -->
+  <div id="status-line" class="no-text">
+    <span id="status-compact"><span class="dot"></span>思考中...</span>
+  </div>
+
+  <!-- PERMISSION DIALOG -->
+  <div id="perm-dialog">
+    <div class="perm-title">权限请求</div>
+    <div class="perm-body" id="perm-body"></div>
+    <div class="perm-actions">
+      <button id="btn-allow" onclick="respondPermission('allow')">允许</button>
+      <button id="btn-deny" onclick="respondPermission('deny')">拒绝</button>
+    </div>
+  </div>
+
+  <!-- INPUT DECK -->
+  <div id="input-deck">
+    <input type="text" id="msg-input" placeholder="输入指令..." autofocus autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button id="btn-cancel" onclick="cancelOperation()">✕</button>
+    <button id="btn-send" onclick="sendMessage()" disabled>▶</button>
+  </div>
+
+</div>
+
+<script>
+// ===== STATE =====
+let ws = null, currentSessionId = null;
+let reconnectTimer = null, connected = false;
+let sessionState = 'idle';
+
+// ===== DOM =====
+const screenEl = document.getElementById('screen');
+const screenWrap = document.getElementById('screen-wrap');
+const inputEl = document.getElementById('msg-input');
+const btnSend = document.getElementById('btn-send');
+const btnCancel = document.getElementById('btn-cancel');
+const stateLed = document.getElementById('state-led');
+const stateLabel = document.getElementById('state-label');
+const permDialog = document.getElementById('perm-dialog');
+const permBody = document.getElementById('perm-body');
+const welcomeEl = document.getElementById('welcome-overlay');
+const statusLine = document.getElementById('status-line');
+const statusCompact = document.getElementById('status-compact');
+
+// Track current blocks so we can replace them
+let currentThinkBlock = null;
+let currentAnswerBlock = null;
+
+// ===== CONNECT =====
+function connect(sessionId) {
+  if (ws && ws.readyState === WebSocket.OPEN && connected) return;
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  let url = `${protocol}//${location.host}/ws`;
+  if (sessionId) url += `?session=${encodeURIComponent(sessionId)}`;
+
+  ws = new WebSocket(url);
+  ws.onopen = () => { connected = true; if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;} };
+  ws.onmessage = (e) => { try{ handleMessage(JSON.parse(e.data)); }catch{} };
+  ws.onclose = () => { connected = false; setState('idle');
+    if(!reconnectTimer) reconnectTimer = setTimeout(()=>{reconnectTimer=null;connect(currentSessionId);},3000); };
+  ws.onerror = () => {};
+}
+
+// ===== MESSAGE ROUTER =====
+function handleMessage(msg) {
+  switch(msg.type) {
+    case 'status':
+      currentSessionId = msg.sessionId;
+      setState(msg.state);
+      if (msg.state === 'idle') {
+        welcomeEl.style.display = 'none';
+        btnSend.disabled = false;
+        setStatusLine('');
+      }
+      break;
+
+    case 'thinking_block':
+      welcomeEl.style.display = 'none';
+      renderThinkingBlock(msg.text);
+      break;
+
+    case 'answer_block':
+      welcomeEl.style.display = 'none';
+      renderAnswerBlock(msg.text);
+      break;
+
+    case 'output_status':
+      setStatusLine(msg.text);
+      break;
+
+    case 'need_permission':
+      setState('awaiting_permission');
+      permBody.textContent = (msg.text || '').slice(-500);
+      permDialog.classList.add('active');
+      vibrate();
+      flashTitle();
+      break;
+
+    case 'ready_for_input':
+      setState('idle');
+      btnSend.disabled = false;
+      setStatusLine('');
+      break;
+
+    case 'session_ended':
+      setState('done');
+      appendDiv('─── 会话结束 ───', 'answer-line');
+      btnSend.disabled = true;
+      setStatusLine('');
+      break;
+  }
+}
+
+// ===== RENDER: Thinking Block (collapsed by default) =====
+function renderThinkingBlock(text) {
+  // Remove previous thinking block
+  if (currentThinkBlock) currentThinkBlock.remove();
+
+  const lines = text.split('\n').filter(l => l.trim());
+  if (!lines.length) return;
+
+  const container = document.createElement('div');
+  container.className = 'think-block';
+
+  // Toggle button
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'think-toggle';
+  toggleBtn.textContent = '▸ 思考过程 (' + lines.length + '行)';
+
+  // Content container (hidden by default)
+  const contentDiv = document.createElement('div');
+  contentDiv.className = 'think-content';
+
+  for (const line of lines) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    div.className = 'think-line';
+    contentDiv.appendChild(div);
+  }
+
+  toggleBtn.onclick = () => {
+    const isOpen = contentDiv.classList.toggle('open');
+    toggleBtn.textContent = isOpen
+      ? '▾ 隐藏思考过程 (' + lines.length + '行)'
+      : '▸ 思考过程 (' + lines.length + '行)';
+  };
+
+  container.appendChild(toggleBtn);
+  container.appendChild(contentDiv);
+  screenEl.appendChild(container);
+  currentThinkBlock = container;
+  scrollScreen();
+  trimScreen();
+}
+
+// ===== RENDER: Answer Block (visible, highlighted) =====
+function renderAnswerBlock(text) {
+  // Remove previous answer block
+  if (currentAnswerBlock) currentAnswerBlock.remove();
+
+  const lines = text.split('\n');
+  if (!lines.length) return;
+
+  const container = document.createElement('div');
+  container.className = 'answer-block';
+
+  for (const line of lines) {
+    const div = document.createElement('div');
+    div.textContent = line || ' ';
+    div.className = (line.trim() && /^❯\s/.test(line.trim()))
+      ? 'cmd-line'
+      : 'answer-line';
+    // If it's a user command echo, wrap it in a cmd-block
+    if (line.trim() && /^❯\s/.test(line.trim())) {
+      const cmdWrap = document.createElement('div');
+      cmdWrap.className = 'cmd-block';
+      cmdWrap.appendChild(div);
+      screenEl.appendChild(cmdWrap);
+    } else {
+      container.appendChild(div);
+    }
+  }
+
+  screenEl.appendChild(container);
+  currentAnswerBlock = container;
+  scrollScreen();
+  trimScreen();
+}
+
+function appendDiv(text, className) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  div.className = className;
+  screenEl.appendChild(div);
+  scrollScreen();
+  trimScreen();
+}
+
+// ===== STATUS LINE =====
+function setStatusLine(text) {
+  if (!statusLine) return;
+  if (text && text.trim()) {
+    statusCompact.innerHTML = '<span class="dot"></span>' + text.trim();
+    statusLine.classList.remove('no-text');
+  } else {
+    statusCompact.innerHTML = '';
+    statusLine.classList.add('no-text');
+  }
+}
+
+function scrollScreen() {
+  requestAnimationFrame(() => { screenWrap.scrollTop = screenWrap.scrollHeight; });
+}
+
+function trimScreen() {
+  while (screenEl.children.length > 200) {
+    screenEl.firstChild.remove();
+  }
+}
+
+// ===== STATE =====
+function setState(state) {
+  sessionState = state;
+  stateLed.className = state;
+  const labels = {
+    idle: '就绪',
+    processing: '思考中...',
+    awaiting: '⚠ 确认',
+    awaiting_permission: '⚠ 确认',
+    done: '结束'
+  };
+  stateLabel.textContent = labels[state] || state;
+
+  if (state !== 'processing' && state !== 'awaiting_permission') {
+    setStatusLine('');
+  }
+
+  if (state === 'processing' || state === 'awaiting_permission') {
+    btnCancel.classList.add('visible');
+  } else {
+    btnCancel.classList.remove('visible');
+  }
+  if (state !== 'awaiting_permission') {
+    permDialog.classList.remove('active');
+  }
+  if (state === 'idle') {
+    btnSend.disabled = false;
+  }
+}
+
+// ===== ACTIONS =====
+function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  welcomeEl.style.display = 'none';
+
+  // Don't remove previous blocks — they're conversation history.
+  // Just clear references so new blocks are created fresh for this round.
+  currentThinkBlock = null;
+  currentAnswerBlock = null;
+
+  // Show user prompt immediately
+  const cmdWrap = document.createElement('div');
+  cmdWrap.className = 'cmd-block';
+  const cmdLine = document.createElement('div');
+  cmdLine.textContent = '❯ ' + text;
+  cmdLine.className = 'cmd-line';
+  cmdWrap.appendChild(cmdLine);
+  screenEl.appendChild(cmdWrap);
+  scrollScreen();
+
+  ws.send(JSON.stringify({ type: 'message', text: text }));
+  inputEl.value = '';
+  btnSend.disabled = true;
+  setState('processing');
+}
+
+function respondPermission(action) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'permission_' + action }));
+  permDialog.classList.remove('active');
+  setState('processing');
+}
+
+function cancelOperation() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'cancel' }));
+  appendDiv('✕ 已取消', 'answer-line');
+  setState('idle');
+  btnSend.disabled = false;
+}
+
+// ===== FEEDBACK =====
+function vibrate() {
+  if (navigator.vibrate) navigator.vibrate([80, 40, 80, 40, 160]);
+}
+
+function flashTitle() {
+  const orig = document.title; let c = 0;
+  const t = setInterval(() => { c++;
+    if(c>8){clearInterval(t);document.title=orig;return;}
+    document.title = c%2===0 ? '⚠ CLAUDE 掌機' : orig;
+  }, 500);
+}
+
+// ===== INPUT =====
+inputEl.addEventListener('input', () => {
+  btnSend.disabled = !inputEl.value.trim();
+});
+
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && inputEl.value.trim()) { e.preventDefault(); sendMessage(); }
+});
+
+// ===== INIT =====
+connect(null);
+</script>
+</body>
+</html>

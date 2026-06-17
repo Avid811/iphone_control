@@ -1,0 +1,15 @@
+{
+  "name": "claude-bridge",
+  "version": "1.0.0",
+  "description": "Web bridge for iPhone ↔ Claude Code interaction over Tailscale",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --dev"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  }
+}

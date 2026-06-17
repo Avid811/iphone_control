@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py *)",
+      "Bash(curl *)",
+      "Bash(echo '{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"dir D:\\\\\\\\\"},\"cwd\":\"D:\\\\\\\\claude_projects\\\\\\\\iphone_control\\\\\\\\bridge\"}')",
+      "Bash(echo '{\"hook_event_name\":\"Stop\",\"cwd\":\"D:\\\\\\\\claude_projects\\\\\\\\iphone_control\\\\\\\\bridge\",\"num_turns\":\"3\"}')",
+      "Skill(claude-api)",
+      "WebSearch",
+      "Bash(echo '{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"AskUserQuestion\",\"tool_input\":{\"questions\":[{\"question\":\"测试问题?\",\"header\":\"测试\"}]},\"cwd\":\"D:\\\\\\\\test\"}')",
+      "Bash(echo \"exit: $?\")",
+      "Bash(echo '{\"hook_event_name\":\"Stop\",\"cwd\":\"D:\\\\\\\\claude_projects\\\\\\\\iphone_control\\\\\\\\bridge\",\"num_turns\":\"5\"}')",
+      "Bash(taskkill /f /im node.exe)",
+      "Bash(node server.js)",
+      "Skill(update-config)",
+      "Bash(echo '{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"/test/test.txt\"},\"cwd\":\"D:\\\\\\\\claude_projects\\\\\\\\iphone_control\\\\\\\\bridge\",\"permission_mode\":\"default\"}')",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 27344 //F)",
+      "Bash(cd D:\\\\\\\\claude_projects\\\\\\\\iphone_control\\\\\\\\bridge)",
+      "Bash(taskkill *)",
+      "Bash(powershell *)",
+      "Bash(node --check server.js)",
+      "Bash(node --check public/index.html)"
+    ]
+  },
+  "spinnerTipsEnabled": false,
+  "showThinkingSummaries": false
+}
