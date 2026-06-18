@@ -1,227 +1,272 @@
-# 🔑 配置指南 — 克隆后必须替换的 Key
+# 🔑 配置指南 — 从零到完美运行
 
-> 克隆本项目后，按此文档逐步配置，确保所有功能正常工作。
+> 克隆本项目后，按此文档逐步配置。每一步约 2-3 分钟，全部完成后即可在任何地方用 iPhone 操控 Claude Code。
 
 ---
 
-## 第一步：安装前置依赖
+## 🗺️ 路线图
+
+```
+第一步 (必须)          第二步 (推荐)        第三步 (推荐)      第四步 (必须)
+安装 Node.js      →   配置 Bark 推送   →   配置 Tailscale  →   防火墙 + 启动
++ Claude Code                                                      + iPhone 连接
+```
+
+---
+
+## 第一步：安装前置依赖（必须）
+
+### 1.1 安装 Node.js
 
 ```bash
-# 1. Node.js（如果还没有）
+# 方法 1: winget（Windows 11 自带）
 winget install OpenJS.NodeJS.LTS
 
-# 2. Claude Code
+# 方法 2: 官网下载
+# https://nodejs.org/ → 下载 LTS 版本 → 双击安装
+```
+
+验证：
+```bash
+node --version    # 应显示 v18.x 或更高
+npm --version     # 应显示 9.x 或更高
+```
+
+### 1.2 安装 Claude Code
+
+```bash
 npm install -g @anthropic-ai/claude-code
+```
 
-# 3. 验证安装
-node --version    # 应显示 v20.x 或更高
+验证：
+```bash
 claude --version  # 应显示版本号
+```
 
-# 4. 安装项目依赖
-cd iphone_control/bridge
+> 💡 首次运行 `claude` 需要登录 Anthropic 账号。如果还没账号，去 [console.anthropic.com](https://console.anthropic.com) 注册。
+
+### 1.3 安装项目依赖
+
+```bash
+cd iphone_remote_control_cc/bridge
 npm install
 ```
 
+> 依赖只有 3 个：`express`（HTTP 服务）、`node-pty`（伪终端）、`ws`（WebSocket）。安装很快。
+
 ---
 
-## 第二步：配置 Bark 推送通知（可选但强烈推荐）
+## 第二步：配置 Bark 推送通知（推荐）
 
-Bark 是一款 iOS 推送通知 App，当 Claude 需要权限确认时，会向你的 iPhone 发送推送通知。
+Bark 是 iOS 推送通知 App。Claude 需要权限确认时，即使你不看手机屏幕，也能收到推送提醒。
 
 ### 2.1 获取 Bark Key
 
-1. 在 iPhone App Store 搜索 **"Bark"**，安装 App
-2. 打开 Bark App，注册设备
-3. 在 App 首页会看到类似这样的地址：
-   ```
-   https://api.day.app/KmoqoxbnTRzWPoLztRoUtj
-                            └────── 这就是你的 Key ──────┘
-   ```
-4. 复制你的 Key（`/` 后面的那串字符）
+1. iPhone App Store 搜索 **"Bark"**，安装
+2. 打开 App → 注册设备
+3. 首页显示类似 `https://api.day.app/KmoqoxbnTRzWPoLztRoUtj`
+4. **`/` 后面的那串字符就是你的 Key**
 
-### 2.2 配置环境变量
+### 2.2 测试推送
 
-**方法 A：系统环境变量（推荐）**
+```bash
+# 把 "你的Key" 替换为实际 Key
+curl "https://api.day.app/你的Key/测试标题/测试内容?sound=alarm&level=timeSensitive&group=Claude"
+```
+
+iPhone 收到推送 → 配置成功 ✅
+
+### 2.3 设置环境变量
+
+**方法 A：系统环境变量（推荐，永久生效）**
 
 ```powershell
-# PowerShell 管理员模式
+# PowerShell（管理员）
 [System.Environment]::SetEnvironmentVariable('BARK_KEY', '你的BarkKey', 'User')
 ```
 
+设置后需要**重启终端**（或注销重登录）才能使新进程读取到。
+
 **方法 B：在 start.bat 中设置**
 
-编辑 `bridge/start.bat`，在文件开头添加：
+编辑 `bridge/start.bat`，在 `@echo off` 下一行添加：
 ```batch
 set BARK_KEY=你的BarkKey
 ```
 
-**方法 C：启动时传入**
+**方法 C：临时设置**
 
 ```bash
-# 命令行启动
 set BARK_KEY=你的BarkKey && node server.js
 ```
-
-> ⚠️ **不要将 Bark Key 写入 `server.js` 代码中**。代码中已移除硬编码的 Key，改为读取 `BARK_KEY` 环境变量。
-
-### 2.3 测试 Bark 推送
-
-```bash
-curl "https://api.day.app/你的BarkKey/测试标题/测试内容?sound=alarm&level=timeSensitive&group=Claude"
-```
-
-如果 iPhone 收到推送，说明配置成功。
 
 ---
 
 ## 第三步：配置 Tailscale 网络（推荐）
 
-Tailscale 让你在任何地方通过 iPhone 安全访问家里的电脑。
+Tailscale 让你在任何地方通过 iPhone 安全访问家里的电脑，无需公网 IP。
 
-### 3.1 安装 Tailscale
+### 3.1 安装
 
-1. 在 [tailscale.com/download](https://tailscale.com/download) 下载 Windows 客户端并安装
-2. 在 iPhone App Store 搜索 "Tailscale" 并安装
-3. 在两台设备上登录同一个 Tailscale 账号
+1. [tailscale.com/download](https://tailscale.com/download) → 下载 Windows 客户端 → 安装
+2. iPhone App Store 搜索 "Tailscale" → 安装
+3. 两台设备登录**同一个 Tailscale 账号**
 
-### 3.2 查看你的 Tailscale IP
+### 3.2 验证连接
 
 ```powershell
+# Windows PowerShell
+tailscale status
+# 应该看到你的 iPhone 在线
+
 tailscale ip -4
-# 输出类似: 100.84.123.56
+# 输出类似: 100.84.123.56  ← 这就是你的 Tailscale IP，记下来
 ```
 
 ### 3.3 配置环境变量（可选）
 
 ```powershell
-[System.Environment]::SetEnvironmentVariable('TAILSCALE_IP', '你的Tailscale IP', 'User')
+[System.Environment]::SetEnvironmentVariable('TAILSCALE_IP', '100.84.123.56', 'User')
 ```
 
-> 这个变量仅用于启动日志显示，不影响实际功能。即使不配置，服务也能正常运行。
+> 这个变量仅用于启动日志显示，不配置也不影响功能。
 
 ---
 
-## 第四步：配置 Windows 防火墙
+## 第四步：防火墙 + 启动（必须）
 
-Bridge 服务器监听 `0.0.0.0:3000`，需要允许入站连接：
+### 4.1 开放防火墙端口
 
 ```powershell
-# PowerShell 管理员模式
+# PowerShell（管理员）
 netsh advfirewall firewall add rule name="Claude Bridge" dir=in action=allow protocol=TCP localport=3000
 ```
 
-如果使用 Tailscale，也可以只在 Tailscale 网络接口上开放：
-1. 打开 "Windows 防火墙高级设置"
-2. 找到 "Claude Bridge" 规则
-3. 属性 → 高级 → 接口 → 仅勾选 "Tailscale" 接口
+> 💡 如果只用 Tailscale，可以限定只在该接口上开放：
+> 打开 "Windows 防火墙高级安全" → 入站规则 → 找到 "Claude Bridge" → 属性 → 高级 → 接口 → 仅勾选 "Tailscale"
 
----
+### 4.2 启动服务
 
-## 第五步：启动服务
-
-### 双击启动（最简单）
-
-在 `bridge/` 目录下，双击 **`start.bat`**
+**最简单：双击 `bridge/start.bat`**
 
 脚本会自动：
-1. 检查并释放 3000 端口
-2. 安装 npm 依赖
+1. 释放 3000 端口（如果被占用）
+2. 安装 npm 依赖（如果还没装）
 3. 检测局域网 IP
-4. 后台启动 Node.js 服务器
+4. 后台启动 Node.js 服务
+5. 显示访问地址，5 秒后窗口自动关闭
 
-启动后窗口显示：
-```
-==========================================
-  iPhone Safari open:
-
-  LAN:  http://192.168.1.104:3000
-  Tailscale: http://你的Tailscale IP:3000
-==========================================
-```
-
-5 秒后窗口自动关闭，服务器在后台持续运行。
-
-### 或命令行启动
+**或命令行：**
 
 ```bash
 cd bridge
 node server.js
 ```
 
-### 停止服务
+启动后显示：
+```
+  Claude Bridge  http://localhost:3000
+  Tailscale      http://你的Tailscale IP:3000
+```
 
-双击 **`stop.bat`** 即可。
+### 4.3 停止服务
 
----
-
-## 第六步：iPhone 连接
-
-1. 确保 iPhone 已连接 Tailscale（或在同一局域网）
-2. Safari 打开 `http://你的Tailscale IP:3000` 或 `http://电脑局域网IP:3000`
-3. 看到 "CLAUDE 掌機" 界面后，即可开始使用
-
-> 💡 **添加到主屏幕**：Safari 中点击分享按钮 → "添加到主屏幕"，获得类 App 体验。
+双击 `bridge/stop.bat`，或直接关闭命令行窗口。
 
 ---
 
-## 可选：编译 C 版 inject-keystroke.exe
+## 第五步：iPhone 连接
 
-`inject-keystroke.ps1` (PowerShell) 在所有 Windows 10/11 上直接可用，无需编译。
+1. 确保 iPhone 已连接 Tailscale（App 中看到绿色 ✓）
+2. Safari 打开 `http://你的Tailscale IP:3000`
+   - 或局域网: `http://192.168.x.x:3000`
+3. 看到 **"CLAUDE 掌機"** 复古界面 → 成功！🎉
 
-如果你想要更快的注入速度（C 版本无需 Powershell 启动开销），可以编译 C 版本：
+> 💡 **添加到主屏幕**：Safari → 分享按钮 → "添加到主屏幕"，获得类 App 全屏体验。
+
+---
+
+## 📋 配置检查清单
+
+| 检查项 | 命令 | 预期结果 |
+|--------|------|---------|
+| Node.js 已安装 | `node --version` | v18.x 或更高 |
+| Claude Code 已安装 | `claude --version` | 显示版本号 |
+| npm 依赖已安装 | `ls bridge/node_modules/express` | 目录存在 |
+| Bark Key 已配置 | `echo %BARK_KEY%` | 显示你的 Key |
+| Bark 推送可达 | 见 2.2 节 curl 测试 | iPhone 收到推送 |
+| Tailscale 已连接 | `tailscale status` | iPhone 显示在线 |
+| Tailscale IP | `tailscale ip -4` | 显示 100.x.x.x |
+| 防火墙已放行 | `netsh advfirewall firewall show rule name="Claude Bridge"` | 规则存在 |
+| 服务已启动 | `curl http://localhost:3000/health` | `{"status":"ok",...}` |
+| iPhone 可访问 | Safari 打开 URL | 显示 "CLAUDE 掌機" |
+
+---
+
+## 🔧 可选：编译 C 版按键注入
+
+PowerShell 版 (`inject-keystroke.ps1`) 在所有 Windows 10/11 上直接可用，**无需编译**。
+
+如果追求更快的注入速度（省去 PowerShell 启动开销）：
 
 ```bash
-# 方法 1: 使用 MSVC (Developer Command Prompt for VS)
+# 方法 1: MSVC (Developer Command Prompt for VS)
 cd bridge
 build-inject.bat
 
-# 方法 2: 使用 GCC
+# 方法 2: GCC
 gcc -O2 inject-keystroke.c -o inject-keystroke.exe
 
-# 方法 3: 使用 MinGW-w64
+# 方法 3: MinGW-w64
 x86_64-w64-mingw32-gcc -O2 inject-keystroke.c -o inject-keystroke.exe
 ```
 
-编译成功后，`server.js` 会自动优先使用 `.exe` 版本。
+编译后 `server.js` 会自动优先使用 `.exe` 版本。
 
 ---
 
-## 常见问题
+## ❓ 常见配置问题
 
-### Q: iPhone 无法连接？
+### Q: 启动后 iPhone 连不上？
 
-1. 确认电脑和 iPhone 在同一 Tailscale 网络（Tailscale App 中查看两台设备是否都在线）
-2. 确认防火墙已放行端口 3000
-3. 确认服务器正在运行：`curl http://localhost:3000/health`
+```
+排查顺序：
+1. curl http://localhost:3000/health    ← 服务是否在运行？
+2. curl http://电脑IP:3000/health       ← 局域网是否可达？
+3. 检查防火墙规则                       ← 端口是否被阻止？
+4. 确认 iPhone 在同一网络               ← Tailscale 或 WiFi？
+```
 
-### Q: 注入按键失败？
+### Q: `npm install` 报错？
 
-1. **以管理员权限运行**：右键 `start.bat` → "以管理员身份运行"
-2. 或管理员 PowerShell 中运行 `node server.js`
+```
+1. node-pty 需要 C++ 编译工具
+   → 管理员 PowerShell 运行:
+     npm install --global windows-build-tools
+   → 或安装 Visual Studio Build Tools:
+     https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio
 
-### Q: 看不到外部会话？
+2. 如果还是失败，尝试:
+     npm install --force
+```
 
-1. 确认电脑上确实有独立运行的 `claude` 命令
-2. 检查 `~/.claude/sessions/` 目录下是否有 `.json` 文件
-3. 外部会话必须运行超过 3 秒才会被扫描到（排除启动中的进程）
+### Q: PowerShell 脚本被阻止？
 
-### Q: Bark 推送收不到？
+```powershell
+# 管理员 PowerShell 运行一次即可
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
 
-1. 确认 `BARK_KEY` 环境变量已正确设置
-2. 先测试直接 curl Bark API 是否能收到推送
-3. 检查防火墙是否阻止了 Node.js 的 HTTPS 出站连接
+### Q: Tailscale 连接慢？
+
+```
+1. Tailscale 会自动选择最优路径（直连或中继）
+2. 如果两台设备在同一局域网，通常直连很快
+3. 查看状态: tailscale status
+   显示 "direct" → 直连 ✅
+   显示 "relay"  → 中继，稍慢但可用
+```
 
 ---
 
-## 配置检查清单
-
-| 检查项 | 命令/操作 | 预期结果 |
-|--------|-----------|---------|
-| Node.js 已安装 | `node --version` | v20.x 或更高 |
-| Claude Code 已安装 | `claude --version` | 显示版本号 |
-| npm 依赖已安装 | 双击 `start.bat` | 自动安装 |
-| Bark Key 已配置 | `echo %BARK_KEY%` | 显示你的 Key |
-| Tailscale 已连接 | `tailscale status` | 显示在线设备 |
-| 防火墙已放行 | 见第四步 | 3000 端口可入站 |
-| 服务器已启动 | `curl http://localhost:3000/health` | `{"status":"ok",...}` |
-| iPhone 可访问 | Safari 打开 URL | 显示 "CLAUDE 掌機" 界面 |
+> 🎉 配置完成后，回到 [README.md](./README.md) 查看使用指南和 API 文档。
