@@ -171,6 +171,19 @@
 
 > 不要怕，跟着一步步来。只要有 Windows 10 或 11 的电脑，总共大概 15 分钟。
 
+### 🖥️ 新手必读：认识两个"黑窗口"
+
+本教程会反复让你在"黑窗口"里输入命令。Windows 有两种黑窗口，**不用纠结区别**：教程里让你复制命令到哪个，你就用哪个，效果一样。
+
+| 黑窗口名字 | 怎么打开 | 什么时候用 |
+|-----------|---------|-----------|
+| **cmd（命令提示符）** | 按 `Win+R` → 输入 `cmd` → 回车 | 日常命令都用它 |
+| **PowerShell** | 点"开始" → 搜索 "PowerShell" → 回车 | 需要"管理员权限"时用它（教程会明确说） |
+
+> 💡 **怎么"以管理员身份运行"？** 点"开始" → 搜索"PowerShell" → **右键点它** → 选"以管理员身份运行"。看到弹出"是否允许此应用…"的提示 → 点"是"。管理员窗口的标题栏会显示"管理员"三个字。
+
+---
+
 ### 前置条件检查
 
 | 你需要有的 | 怎么检查 |
@@ -184,7 +197,7 @@
 
 ### 第一步：安装 Node.js
 
-**什么是 Node.js？** 一个让电脑能运行 JavaScript 的环境，bridge 服务器需要它。
+**什么是 Node.js？** 一个让电脑能运行 JavaScript 的环境，它就像电脑里的"翻译官"——bridge 服务器用 JavaScript 写的，得靠 Node.js 来执行。
 
 ```
 方式一（推荐，Windows 11 自带）：
@@ -203,10 +216,14 @@
 **验证安装成功：**
 
 ```
-按 Win+R → 输入 cmd → 回车
-在弹出的黑窗口里输入：
+按 Win+R → 输入 cmd → 回车（打开 cmd 黑窗口）
+在黑窗口里输入：
   node --version
 应该显示类似 v20.11.0（版本号 ≥ 18 就行）
+
+再输入：
+  npm --version
+应该显示类似 10.x.x（说明包管理器也装好了）
 ```
 
 ---
@@ -237,17 +254,37 @@ claude
 
 ### 第三步：下载本项目
 
+**方式一：用 Git 命令行下载（推荐）**
+
 ```bash
-# 在黑窗口里依次输入：
+# 先定位到你的用户目录（就是放你自己文件的地方）
+# %USERPROFILE% 是系统变量，自动等于 C:\Users\你的用户名
 cd %USERPROFILE%
+
+# 下载项目
 git clone https://github.com/Avid811/iphone_remote_control_cc.git
+
+# 进入 bridge 子目录
 cd iphone_remote_control_cc\bridge
+
+# 安装依赖
 npm install
 ```
 
-> ⚠️ 如果提示 `git` 命令不存在：去 [git-scm.com](https://git-scm.com/download/win) 下载安装 Git。
->
-> 或者直接：点 GitHub 页面上绿色的 "<> Code" 按钮 → "Download ZIP" → 解压到桌面 → 进入 `bridge` 文件夹。
+**方式二：不会用 Git？用 ZIP 包下载**
+
+1. 打开浏览器，访问 `https://github.com/Avid811/iphone_remote_control_cc`
+2. 点页面上绿色的 **"<> Code"** 按钮 → 选 **"Download ZIP"**
+3. 下载完成后，**解压到桌面**（右键 zip → 全部解压 → 选桌面）
+4. 桌面上会多出一个 `iphone_remote_control_cc` 文件夹
+5. **打开这个文件夹 → 再打开里面的 `bridge` 子文件夹**
+6. 在 `bridge` 文件夹的**地址栏**（顶部那条路径）里输入 `cmd` 然后按回车
+7. 弹出的黑窗口就已经定位到这个文件夹了，然后输入：
+   ```bash
+   npm install
+   ```
+
+> ⚠️ 如果提示 `git` 命令不存在：去 [git-scm.com](https://git-scm.com/download/win) 下载安装 Git，选默认选项一路 Next 就行。
 
 **`npm install` 做了什么？** 下载 bridge 服务器需要的 3 个组件（express、ws、node-pty），大概 2MB，很快。
 
@@ -312,11 +349,54 @@ This window will auto-close in 5 seconds...
 
 ---
 
-## 🔔 配置 Bark 推送通知
+## 🔔 Bark 推送通知 — 完整的通知链路
 
-> **Bark 是什么？** 一个免费的 iOS App，让电脑能把推送消息发到你的 iPhone。
+> **Bark 是什么？** 一个免费的 iOS App。电脑上的程序通过一个简单的 URL 就能把推送消息发到你的 iPhone。
 >
-> **在这个项目里的作用：** Claude 卡在权限确认时，Bark 立刻推送到你的 iPhone。你不用一直盯着屏幕，该干嘛干嘛，Claude 需要你的时候它会叫你。
+> **在这个项目里的核心价值：** 你不是总盯着电脑屏幕的。当 Claude 执行到一半卡在权限确认时（"是否允许执行这个命令？"），Bark 立刻推送到你的 iPhone。点开推送 → 跳转到掌機 → 点一下 [允许] → Claude 继续干活。整个过程 10 秒搞定。
+
+### 整个链路是怎么跑的
+
+```
+Claude 卡在权限确认
+  │
+  ▼
+bridge/server.js 的 PTY 输出检测
+  │  detectPermission() 正则匹配 9 种模式
+  │  匹配到 "Do you want to allow..." / "是否允许..." / "[y/n]" 等
+  ▼
+sendBarkNotification() 被调用  ←── 完全内置在 server.js 第 99-111 行
+  │  用 Node.js 原生 https 模块
+  │  零外部依赖，不依赖任何第三方项目或 Python 脚本
+  ▼
+Bark API (api.day.app/你的Key)
+  │  Apple Push Notification Service (APNs)
+  ▼
+你的 iPhone
+  ├─ 收到推送通知："Claude 需要确认 — 安装依赖包，是否继续？"
+  ├─ 点击推送 → Safari 打开掌機页面
+  └─ 掌機界面弹出权限对话框 → 点 [允许] 或 [拒绝]
+```
+
+### 什么会触发 Bark 通知？什么不会？
+
+**会触发 ✅**（bridge 自己的 Claude 会话检测到权限时）：
+
+| 触发场景 | 正则模式示例 |
+|---------|------------|
+| Claude 问是否允许执行命令 | `Do you want to allow/proceed/continue...` |
+| 中文权限询问 | `是否允许/继续/执行` |
+| y/n 确认提示 | `[y/n]`、`(y/n)`、`Press y to...` |
+| 多选项确认 | `1. Yes 2. No 3. Allow all` |
+| 权限关键词 | `Permission required` |
+
+**不会触发 ❌**（这些不在 bridge 的检测范围内）：
+- Claude 开始执行工具（如"正在读取文件..."）
+- 工具执行完成（如"写入成功"）
+- Claude 报错
+- 上下文压缩
+
+> 💡 **为什么只覆盖权限确认？** 因为这是唯一需要你**立刻介入**的场景。工具执行、完成、报错等信息都不需要你即时反应——你下次打开掌機自然能看到。如果每个工具调用都推送，你的手机会被轰炸。
 
 ### 安装和获取 Key
 
