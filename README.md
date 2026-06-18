@@ -16,17 +16,48 @@
 
 ---
 
+## 🖼️ 效果展示
+
+> 先看几张真实截图，感受一下掌機的实际体验。
+
+### 掌機主界面 + 权限弹窗
+
+<p align="center">
+  <img src="docs/images/phone-active-sessions-allow-deny.jpg" alt="掌機界面 — 显示电脑活跃会话，琥珀色权限弹窗" width="320">
+</p>
+
+*↑ iPhone 掌機界面：顶部状态栏显示"CLAUDE 掌機 v8"，中间列出电脑上正在运行的 Claude 实例，琥珀色闪烁边框表示该实例正在等待权限确认，底部有醒目的 [允许] / [拒绝] 按钮。*
+
+### 在手机上刷抖音时，电脑 Claude 需要权限 — 立刻弹窗
+
+<p align="center">
+  <img src="docs/images/permission-popup-while-using-tiktok.jpg" alt="刷抖音时收到权限推送" width="320">
+</p>
+
+*↑ 你正在刷抖音，电脑上的 Claude 卡在权限确认 — Bark 推送立刻到达，弹出醒目的"权限请求"对话框。不用放下抖音，点一下 [允许] 就搞定。*
+
+### Apple Watch 也能收到通知
+
+<p align="center">
+  <img src="docs/images/permission-dialog-and-apple-watch.jpg" alt="权限弹窗同时出现在 iPhone 和 Apple Watch" width="320">
+</p>
+
+*↑ 权限通知不仅推送到 iPhone，Apple Watch 也同步显示。手腕上抬一下就知道 Claude 需要你，点一下表盘就能跳转处理。*
+
+---
+
 ## 目录
 
 1. [三个核心使用场景](#-三个核心使用场景) ← **先看这里，理解这个项目能做什么**
-2. [功能一览](#-功能一览)
-3. [电脑小白安装教程](#-电脑小白安装教程)
-4. [配置 Bark 推送通知](#-配置-bark-推送通知)
-5. [配置 Tailscale 组网](#-配置-tailscale-组网推荐)
-6. [iPhone 连接与使用](#-iphone-连接与使用)
-7. [系统架构（进阶阅读）](#-系统架构进阶阅读)
-8. [API 参考](#-api-参考)
-9. [常见问题](#-常见问题)
+2. [效果展示](#-效果展示)
+3. [功能一览](#-功能一览)
+4. [电脑小白安装教程](#-电脑小白安装教程)
+5. [配置 Bark 推送通知](#-配置-bark-推送通知)
+6. [配置 Tailscale 组网](#-配置-tailscale-组网推荐)
+7. [iPhone 连接与使用](#-iphone-连接与使用)
+8. [系统架构（进阶阅读）](#-系统架构进阶阅读)
+9. [API 参考](#-api-参考)
+10. [常见问题](#-常见问题)
 
 ---
 
@@ -66,6 +97,32 @@
 > 你在电脑上给 Claude 布置了一个任务（比如_"安装这个依赖"_），然后去吃饭了。Claude 跑到一半弹出权限确认 _"Do you want to install this package? [y/n]"_ — 它卡住了，傻等在那里。
 >
 > 这时候 Bark 推送一条通知到你的 iPhone：**"Claude 需要确认"**。
+
+#### 实际效果截图
+
+**电脑端：Claude 卡在权限确认，等待人工介入**
+
+<p align="center">
+  <img src="docs/images/pc-instance-needs-approval.png" alt="电脑端 Claude 需要权限确认" width="600">
+</p>
+
+*↑ 电脑上的 Claude Code 弹出了权限确认，如果没有掌機 + Bark，你根本不知道它卡在这里。*
+
+**手机端：立刻收到通知，一键审批**
+
+<p align="center">
+  <img src="docs/images/phone-active-sessions-allow-deny.jpg" alt="手机端显示活跃会话和允许/拒绝按钮" width="320">
+</p>
+
+*↑ 手机掌機界面自动发现这个等待权限的会话（琥珀色闪烁边框），点 [允许] → 电脑上的 Claude 立刻收到 y 键，继续干活。*
+
+**审批通过后：手机端实时看到电脑继续工作的反馈**
+
+<p align="center">
+  <img src="docs/images/after-approval-pc-continues-working.jpg" alt="审批通过后电脑继续工作" width="320">
+</p>
+
+*↑ 点了 [允许] 之后，3 秒内自动抓取电脑 Claude 窗口的最新输出，手机上直接看到它继续执行的结果。*
 
 ```
   电脑上的 Claude 卡住了          你的 iPhone 收到 Bark 推送
@@ -120,6 +177,24 @@
 
 > 你下午在电脑上和 Claude 讨论了半小时的项目架构，现在要出门了。在路上想继续刚才的对话，不想从头开始。
 
+#### 实际效果截图
+
+**出门前（电脑端）：一个简单的对话，作为接管验证**
+
+<p align="center">
+  <img src="docs/images/pc-hello-conversation-for-takeover.png" alt="电脑端进行简单对话用于验证接管功能" width="600">
+</p>
+
+*↑ 电脑上开了一个 Claude Code 窗口，进行了一些对话（问好、询问项目功能等），用于验证手机端能否成功接管。*
+
+**出门后（手机端）：接管成功！历史对话全部加载，还能继续追问**
+
+<p align="center">
+  <img src="docs/images/session-takeover-with-history.jpg" alt="手机接管会话后显示完整历史并验证追问" width="320">
+</p>
+
+*↑ 手机上点 [接管] 后：① 完整的历史对话加载到手机屏幕（能看到电脑上之前的每一条提问和 Claude 的回答）；② 底部出现新的输入框，可以接着刚才的话题继续追问；③ 新问题得到 Claude 的实时回答（图中能看到追问"为什么做这个"得到了完整回复）。*
+
 ```
   出门前（电脑上）                    出门后（iPhone 上）
   ┌────────────────────┐            ┌─────────────────────┐
@@ -164,6 +239,7 @@
 | ⌨️ **按键注入** | 远程向 Claude 窗口发送 y/n/文本 | 点 [允许]/[拒绝] 按钮 |
 | 🔄 **会话接管** | 把电脑上的 Claude 对话切到手机，带聊天记录 | 点 [接管] → 确认 |
 | 📸 **终端截图** | 看一眼 Claude 窗口现在显示啥 | 接管后或注入后自动抓取 |
+| ⌚ **Apple Watch** | 手腕上也能收到权限通知 | Bark 推送自动同步到手表 |
 
 ---
 
@@ -354,6 +430,22 @@ This window will auto-close in 5 seconds...
 > **Bark 是什么？** 一个免费的 iOS App。电脑上的程序通过一个简单的 URL 就能把推送消息发到你的 iPhone。
 >
 > **在这个项目里的核心价值：** 你不是总盯着电脑屏幕的。当 Claude 执行到一半卡在权限确认时（"是否允许执行这个命令？"），Bark 立刻推送到你的 iPhone。点开推送 → 跳转到掌機 → 点一下 [允许] → Claude 继续干活。整个过程 10 秒搞定。
+
+### Bark 通知效果一览
+
+<p align="center">
+  <img src="docs/images/bark-notifications-overview.jpg" alt="Bark 通知类型展示" width="320">
+</p>
+
+*↑ Bark App 内的通知列表截图。你可以看到各种类型的推送：Claude 需要确认、权限请求、安装依赖确认等等。每条通知都标注了来源（Claude 掌機），点击即可跳转到掌機界面处理。*
+
+### 跨设备同步：iPhone + Apple Watch
+
+<p align="center">
+  <img src="docs/images/permission-dialog-and-apple-watch.jpg" alt="iPhone 和 Apple Watch 同步收到通知" width="600">
+</p>
+
+*↑ Bark 推送同时到达 iPhone 和 Apple Watch。即使手机不在手边，抬腕就能看到 Claude 需要你处理什么，方便程度再上一层。*
 
 ### 整个链路是怎么跑的
 
