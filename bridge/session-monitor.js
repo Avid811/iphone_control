@@ -14,7 +14,6 @@ const { execSync } = require('child_process');
 const SESSIONS_DIR = path.join(os.homedir(), '.claude', 'sessions');
 const SCAN_INTERVAL = 3000;  // 每 3 秒扫描一次
 const STALE_TIMEOUT = 30 * 60 * 1000;  // 30 分钟无更新的 session 视为过期
-const STUCK_THRESHOLD = 15 * 1000;  // 15 秒无更新且 status=busy → 可能等待权限
 
 /**
  * 获取所有本地 Claude 会话（从 ~/.claude/sessions/ 读取）
@@ -240,10 +239,10 @@ function getConversationHistory(sessionId, cwd) {
       .toLowerCase();
     const projectsDir = path.join(os.homedir(), '.claude', 'projects');
 
-    // 在 projects 目录下查找匹配的目录
+    // 在 projects 目录下精确匹配
     if (!fs.existsSync(projectsDir)) return '';
     const dirs = fs.readdirSync(projectsDir);
-    const projectDir = dirs.find(d => d.toLowerCase().endsWith(normalized.toLowerCase()));
+    const projectDir = dirs.find(d => d.toLowerCase() === normalized.toLowerCase());
     if (!projectDir) return '';
 
     const jsonlPath = path.join(projectsDir, projectDir, sessionId + '.jsonl');
@@ -290,7 +289,6 @@ function getConversationHistory(sessionId, cwd) {
 module.exports = {
   SESSIONS_DIR,
   SCAN_INTERVAL,
-  STUCK_THRESHOLD,
   getClaudeSessions,
   isPidRunning,
   scanExternalSessions,
