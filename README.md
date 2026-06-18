@@ -1,3 +1,4 @@
+# 欢迎大家点击star⭐！
 # 📱 Claude 掌機 — iPhone 远程控制 Windows Claude Code
 
 > **人躺在沙发上、出门在外、上厕所……随时随地用 iPhone 操控家里电脑上的 Claude Code。**
