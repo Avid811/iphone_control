@@ -5,11 +5,13 @@ const crypto = require('crypto');
 const pty = require('node-pty');
 const express = require('express');
 const { WebSocketServer } = require('ws');
-const { scanExternalSessions, formatRunningTime, SCAN_INTERVAL } = require('./session-monitor');
+const { scanExternalSessions, formatRunningTime, getConversationHistory, SCAN_INTERVAL } = require('./session-monitor');
 const { execFile } = require('child_process');
 
 const PORT = process.env.PORT || 3000;
 const BIND_ADDR = '0.0.0.0';
+// 🌐 Tailscale IP — 替换为你的 Tailscale 节点 IP（运行 `tailscale ip -4` 获取）
+const TAILSCALE_IP = process.env.TAILSCALE_IP || '100.xxx.xxx.xxx';
 const SESSION_DIR = path.join(__dirname, 'sessions');
 if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
 
@@ -24,15 +26,42 @@ app.use(express.static(path.join(__dirname, 'public'), {
   etag: false,
   lastModified: false,
   setHeaders: (res) => {
-    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
   }
 }));
+
+// Force redirect root to include version for cache busting
+app.get('/', (req, res) => {
+  if (!req.query.v) {
+    res.redirect(302, '/?v=8');
+  } else {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'), {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      }
+    });
+  }
+});
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), sessions: sessions.size }));
 app.get('/api/external-sessions', (req, res) => {
   const external = scanExternalSessions(sessions);
   res.json({ sessions: external.map(s => ({
-    ...s,
+    pid: s.pid,
+    sessionId: s.sessionId,
+    cwd: s.cwd,
+    status: s.status,
+    runningTime: s.runningTime,
     runningTimeFormatted: formatRunningTime(s.runningTime),
+    version: s.version,
+    name: s.name,
+    kind: s.kind,
+    likelyWaitingPermission: s.likelyWaitingPermission,
+    stuckDuration: s.stuckDuration,
   }))});
 });
 
@@ -68,10 +97,13 @@ function detectPermission(text) {
 }
 
 // ---- Bark notification ----
-const BARK_KEY = 'KmoqoxbnTRzWPoLztRoUtj';
-const BARK_BASE = `https://api.day.app/${BARK_KEY}`;
+// 🔑 Bark 推送通知密钥 — 替换为你的 Bark Key（从 Bark App 获取）
+//    如果不需要推送通知，可以留空，系统自动跳过推送
+const BARK_KEY = process.env.BARK_KEY || '';
+const BARK_BASE = BARK_KEY ? `https://api.day.app/${BARK_KEY}` : null;
 
 function sendBarkNotification(title, body, level, sound) {
+  if (!BARK_BASE) return;  // 未配置 Bark Key，跳过推送通知
   const encodedTitle = encodeURIComponent(title);
   const encodedBody = encodeURIComponent(body);
   const url = `${BARK_BASE}/${encodedTitle}/${encodedBody}?sound=${sound}&level=${level}&group=Claude`;
@@ -394,6 +426,46 @@ wss.on('connection', (ws, req) => {
             success: !err,
             message: err ? err.message : result,
           });
+          // 注入成功后，延迟抓取终端输出反馈
+          if (!err && data.text.trim()) {
+            setTimeout(() => {
+              captureTerminal(data.pid, (captureErr, capturedText) => {
+                if (!captureErr && capturedText) {
+                  // 只发送尾部最新的内容
+                  const lines = capturedText.split('\n');
+                  const recent = lines.slice(-40).join('\n');
+                  sendToSession(sessionId, {
+                    type: 'terminal_capture',
+                    pid: data.pid,
+                    text: recent,
+                  });
+                }
+              });
+            }, 3000); // 等 3 秒让 Claude 有时间响应
+          }
+        });
+        break;
+
+      case 'capture_terminal':
+        // 手动请求抓取终端内容
+        if (!data.pid) break;
+        captureTerminal(data.pid, (err, text) => {
+          if (!err && text) {
+            const lines = text.split('\n');
+            const recent = lines.slice(-40).join('\n');
+            sendToSession(sessionId, {
+              type: 'terminal_capture',
+              pid: data.pid,
+              text: recent,
+            });
+          } else {
+            sendToSession(sessionId, {
+              type: 'terminal_capture',
+              pid: data.pid,
+              text: '',
+              error: err ? err.message : 'unknown',
+            });
+          }
         });
         break;
 
@@ -430,11 +502,10 @@ function injectKeystroke(pid, text, callback) {
     });
   } else if (fs.existsSync(ps1Path)) {
     // 回退到 PowerShell
-    const psCmd = `powershell.exe -ExecutionPolicy Bypass -File "${ps1Path}" -Pid ${pid} -Text "${text.replace(/"/g, '\\"')}"`;
     execFile('powershell.exe', [
       '-ExecutionPolicy', 'Bypass',
       '-File', ps1Path,
-      '-Pid', String(pid),
+      '-TargetPid', String(pid),
       '-Text', text,
     ], { timeout: 15000 }, (err, stdout, stderr) => {
       if (err) {
@@ -449,30 +520,67 @@ function injectKeystroke(pid, text, callback) {
 }
 
 /**
- * 接管外部会话：在 bridge 内用 --resume 恢复该 session
+ * 抓取外部进程的控制台屏幕内容
+ */
+function captureTerminal(pid, callback) {
+  const ps1Path = path.join(__dirname, 'read-console.ps1');
+  if (!fs.existsSync(ps1Path)) {
+    callback(new Error('read-console.ps1 not found'), null);
+    return;
+  }
+  execFile('powershell.exe', [
+    '-ExecutionPolicy', 'Bypass',
+    '-File', ps1Path,
+    '-TargetPid', String(pid),
+  ], { timeout: 10000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    if (err) {
+      callback(err, stderr || stdout);
+    } else {
+      const b64 = (stdout || '').trim();
+      if (b64) {
+        callback(null, 'data:image/png;base64,' + b64);
+      } else {
+        callback(new Error('Empty capture result'), null);
+      }
+    }
+  });
+}
+
+/**
+ * 接管外部会话
  */
 function takeOverSession(bridgeSessionId, externalSessionId) {
   const bridgeSession = sessions.get(bridgeSessionId);
   if (!bridgeSession) return;
 
-  // 先干掉旧的 PTY（如果有）
-  if (bridgeSession.pty) {
-    try { bridgeSession.pty.kill(); } catch {}
-  }
+  // 查找外部会话的工作目录
+  const extSessions = scanExternalSessions(sessions);
+  const targetExt = extSessions.find(s => s.sessionId === externalSessionId);
+  const cwd = targetExt ? targetExt.cwd : process.cwd();
 
-  // 用 claude --resume 创建新 PTY
+  // 清理旧 PTY
+  if (bridgeSession.pty) {
+    try { bridgeSession.pty.removeAllListeners('exit'); } catch {}
+    try { bridgeSession.pty.kill(); } catch {}
+    bridgeSession.pty = null;
+  }
+  if (bridgeSession.flushTimer) { clearTimeout(bridgeSession.flushTimer); bridgeSession.flushTimer = null; }
+  if (bridgeSession.idleTimer) { clearTimeout(bridgeSession.idleTimer); bridgeSession.idleTimer = null; }
+
+  // 在外部会话的目录下新建 Claude 实例（bridge PTY），获得实时文字流
   const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
   const args = process.platform === 'win32'
-    ? ['/c', `claude --resume ${externalSessionId} --bare`]
-    : ['-c', `claude --resume ${externalSessionId} --bare`];
+    ? ['/c', 'claude --bare']
+    : ['-c', 'claude --bare'];
 
   const proc = pty.spawn(shell, args, {
     name: 'xterm-256color', cols: 120, rows: 35,
-    cwd: process.cwd(),
+    cwd: cwd,
     env: { ...process.env, TERM: 'xterm-256color' },
   });
 
   bridgeSession.pty = proc;
+  bridgeSession.cwd = cwd;
   bridgeSession.state = 'processing';
   bridgeSession.inAnswer = false;
   bridgeSession.permDetected = false;
@@ -481,7 +589,7 @@ function takeOverSession(bridgeSessionId, externalSessionId) {
   bridgeSession.thinkingAccum = '';
   bridgeSession.answerAccum = '';
 
-  // 重新绑定 PTY 数据事件（复用 createSession 中的逻辑）
+  // 复用 createSession 的 PTY 数据处理逻辑
   proc.onData((data) => {
     const clean = stripAnsi(data);
     if (!clean) return;
@@ -514,7 +622,7 @@ function takeOverSession(bridgeSessionId, externalSessionId) {
       if (!line) continue;
       if (isCompletelyUseless(line)) continue;
       if (/^[─-╿▀-▟]{2,}/.test(line)) continue;
-      if (/^[·$\$$\[\]+\s]+$/.test(line)) continue;
+      if (/^[·•∙…\*\.\s]+$/.test(line)) continue;
 
       if (isThinkingStatusLine(line)) {
         const label = extractStatusLabel(line);
@@ -526,9 +634,7 @@ function takeOverSession(bridgeSessionId, externalSessionId) {
         flushThinking(bridgeSession);
         bridgeSession.inAnswer = true;
         const answerText = line.replace(/^●\s?/, '');
-        if (answerText) {
-          bridgeSession.answerAccum += answerText + '\n';
-        }
+        if (answerText) { bridgeSession.answerAccum += answerText + '\n'; }
         continue;
       }
 
@@ -574,11 +680,16 @@ function takeOverSession(bridgeSessionId, externalSessionId) {
     sendToSession(bridgeSessionId, { type: 'session_ended', code: exitCode });
   });
 
+  // 读取外部会话的对话历史
+  const history = getConversationHistory(externalSessionId, cwd);
+
   sendToSession(bridgeSessionId, {
     type: 'take_over_result',
     sessionId: externalSessionId,
     success: true,
-    message: `已接管会话 ${externalSessionId.slice(0, 8)}...`,
+    cwd: cwd,
+    message: `已接管 — 在 ${cwd.split('\\').pop() || cwd} 目录新建 Claude 会话`,
+    history: history || '',
   });
 }
 
@@ -600,6 +711,9 @@ function broadcastExternalSessions() {
       runningTimeFormatted: formatRunningTime(s.runningTime),
       version: s.version,
       name: s.name,
+      kind: s.kind,
+      likelyWaitingPermission: s.likelyWaitingPermission,
+      stuckDuration: s.stuckDuration,
     })),
   };
 
@@ -632,6 +746,6 @@ process.on('SIGINT', () => {
 server.listen(PORT, BIND_ADDR, () => {
   console.log('');
   console.log(`  Claude Bridge  http://localhost:${PORT}`);
-  console.log(`  Tailscale      http://100.105.91.55:${PORT}`);
+  console.log(`  Tailscale      http://${TAILSCALE_IP}:${PORT}`);
   console.log('');
 });

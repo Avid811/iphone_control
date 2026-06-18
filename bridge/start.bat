@@ -34,7 +34,7 @@ echo ==========================================
 echo   iPhone Safari open:
 echo.
 echo   LAN:  http://%LANIP%:3000
-echo   Tailscale: http://100.105.91.55:3000
+echo   Tailscale: http://你的Tailscale IP:3000  （运行 tailscale ip -4 查看）
 echo ==========================================
 echo.
 

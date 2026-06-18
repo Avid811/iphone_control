@@ -2,6 +2,9 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -244,6 +247,16 @@ body::after {
   border-color: var(--red);
   box-shadow: 0 0 8px rgba(248,81,73,0.1);
 }
+#ext-sessions-panel .ext-session.needs-perm {
+  border-color: var(--amber);
+  box-shadow: 0 0 12px rgba(232,184,48,0.25);
+  background: #1a1a10;
+  animation: perm-pulse 2s infinite;
+}
+@keyframes perm-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(232,184,48,0.15); }
+  50% { box-shadow: 0 0 20px rgba(232,184,48,0.4); }
+}
 #ext-sessions-panel .ext-info {
   flex: 1; min-width: 0;
 }
@@ -346,6 +359,7 @@ body::after {
   <!-- STATUS BAR -->
   <div id="status-bar">
     <span class="brand">CLAUDE 掌機</span>
+    <span style="font-size:7px;color:#333;margin-left:4px">v8</span>
     <span class="info">
       <span id="state-label">就绪</span>
       <span id="state-led" class="idle"></span>
@@ -422,6 +436,7 @@ const extEmpty = document.getElementById('ext-empty');
 // Track current blocks so we can replace them
 let currentThinkBlock = null;
 let currentAnswerBlock = null;
+let currentCaptureBlock = null;
 
 // ===== CONNECT =====
 function connect(sessionId) {
@@ -494,13 +509,66 @@ function handleMessage(msg) {
       appendDiv((msg.success ? '✓ ' : '✕ ') + '注入' + msg.text + ' → PID ' + msg.pid + ': ' + msg.message, 'answer-line');
       break;
 
+    case 'terminal_capture':
+      if (msg.text && msg.text.startsWith('data:image/')) {
+        if (currentCaptureBlock) currentCaptureBlock.remove();
+        const capDiv = document.createElement('div');
+        capDiv.style.cssText = 'margin:8px 0;border-left:2px solid var(--purple);padding:4px;background:#0d0d18;';
+        const img = document.createElement('img');
+        img.src = msg.text;
+        img.style.cssText = 'width:100%;max-width:100%;display:block;border-radius:4px;';
+        img.alt = '终端截图 PID ' + msg.pid;
+        img.onclick = function() {
+          // Tap to view fullscreen
+          if (img.style.maxWidth === '100%') {
+            img.style.maxWidth = 'none';
+            img.style.width = 'auto';
+          } else {
+            img.style.maxWidth = '100%';
+            img.style.width = '100%';
+          }
+        };
+        capDiv.appendChild(img);
+        const capFooter = document.createElement('div');
+        capFooter.style.cssText = 'font-size:8px;color:var(--purple);text-align:center;padding:4px;';
+        capFooter.textContent = '▸ 终端截图 PID ' + msg.pid + ' — ' + new Date().toLocaleTimeString() + ' (点击放大)';
+        capDiv.appendChild(capFooter);
+        screenEl.appendChild(capDiv);
+        currentCaptureBlock = capDiv;
+        scrollScreen();
+        trimScreen();
+      } else if (msg.error) {
+        appendDiv('✕ 终端截图失败: ' + msg.error, 'answer-line');
+      }
+      break;
+
+
     case 'take_over_result':
+      clearInjectMode();
       if (msg.success) {
         appendDiv('✓ ' + msg.message, 'answer-line');
+        if (msg.history) {
+          // 显示外部会话的对话历史
+          const histDiv = document.createElement('div');
+          histDiv.style.cssText = 'margin:6px 0;border-left:2px solid var(--cyan);padding:6px 10px;background:#0a1018;max-height:300px;overflow-y:auto;';
+          const histHdr = document.createElement('div');
+          histHdr.style.cssText = 'font-size:9px;color:var(--cyan);margin-bottom:4px;';
+          histHdr.textContent = '▸ 对话历史';
+          histDiv.appendChild(histHdr);
+          const histBody = document.createElement('div');
+          histBody.style.cssText = 'font-size:10px;color:#6688aa;white-space:pre-wrap;line-height:1.5;';
+          histBody.textContent = msg.history;
+          histDiv.appendChild(histBody);
+          screenEl.appendChild(histDiv);
+          currentCaptureBlock = histDiv;
+        }
+        appendDiv('（实时会话已建立，可直接输入对话）', 'answer-line');
         btnSend.disabled = false;
         setState('idle');
       } else {
         appendDiv('✕ 接管失败: ' + msg.message, 'answer-line');
+        btnSend.disabled = false;
+        setState('idle');
       }
       break;
   }
@@ -701,16 +769,40 @@ function flashTitle() {
 
 // ===== INPUT =====
 inputEl.addEventListener('input', () => {
-  btnSend.disabled = !inputEl.value.trim();
+  // 注入模式下按钮始终可用（因为消息可能为空字符串也需要发送）
+  if (inputEl._injectPid) {
+    btnSend.disabled = false;
+  } else {
+    btnSend.disabled = !inputEl.value.trim();
+  }
 });
 
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && inputEl.value.trim()) { e.preventDefault(); sendMessage(); }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (inputEl.value.trim()) {
+      sendMessage();
+    }
+  }
+});
+
+// 移动端：Send 按钮额外绑定 touchend 以防 onclick 不触发
+btnSend.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  if (inputEl.value.trim()) {
+    sendMessage();
+  }
 });
 
 // ===== EXTERNAL SESSIONS =====
 
 let externalSessions = [];
+
+function formatStuckDuration(ms) {
+  if (!ms || ms < 1000) return '';
+  if (ms < 60000) return Math.floor(ms / 1000) + '秒未响应';
+  return Math.floor(ms / 60000) + '分钟未响应';
+}
 
 function renderExternalSessions(sessions) {
   externalSessions = sessions || [];
@@ -729,51 +821,67 @@ function renderExternalSessions(sessions) {
   for (const s of externalSessions) {
     const div = document.createElement('div');
     div.className = 'ext-session';
-    if (s.status === 'busy') div.classList.add('warning');
+
+    // 可能等待权限 → 最醒目的样式
+    if (s.likelyWaitingPermission) {
+      div.classList.add('needs-perm');
+    } else if (s.status === 'busy') {
+      div.classList.add('warning');
+    }
 
     // 提取简短的项目名
     let projectName = s.cwd.split('\\').pop() || s.cwd;
     if (s.name) projectName = s.name;
 
+    // 构建元数据行
+    let metaHTML =
+      '<span>PID ' + s.pid + '</span>' +
+      '<span>' + escapeHtml(s.status || 'unknown') + '</span>' +
+      '<span>' + (s.runningTimeFormatted || '') + '</span>';
+
+    // 如果可能等待权限，添加醒目提示
+    if (s.likelyWaitingPermission) {
+      metaHTML += '<span style="color:var(--amber);font-weight:bold;">⚠ ' + formatStuckDuration(s.stuckDuration) + '</span>';
+    }
+
     const info = document.createElement('div');
     info.className = 'ext-info';
     info.innerHTML =
       '<div class="ext-cwd">' + escapeHtml(projectName) + '</div>' +
-      '<div class="ext-meta">' +
-        '<span>PID ' + s.pid + '</span>' +
-        '<span>' + escapeHtml(s.status || 'unknown') + '</span>' +
-        '<span>' + (s.runningTimeFormatted || '') + '</span>' +
-      '</div>';
+      '<div class="ext-meta">' + metaHTML + '</div>';
 
     const actions = document.createElement('div');
     actions.className = 'ext-actions';
 
-    // 允许按钮
-    const btnAllow = document.createElement('button');
-    btnAllow.textContent = '允许';
-    btnAllow.className = 'ext-btn-allow';
-    btnAllow.onclick = function () {
-      injectKeystrokeToExternal(s.pid, 'y');
-    };
+    // 只有检测到可能等待权限的会话，才显示"允许/拒绝"按钮
+    if (s.likelyWaitingPermission) {
+      // 允许按钮 — 加大醒目
+      const btnAllow = document.createElement('button');
+      btnAllow.textContent = '允许';
+      btnAllow.className = 'ext-btn-allow';
+      btnAllow.style.cssText = 'padding:8px 12px;font-size:7px;';
+      btnAllow.onclick = function () {
+        injectKeystrokeToExternal(s.pid, 'y');
+      };
+      actions.appendChild(btnAllow);
 
-    // 拒绝按钮
-    const btnDeny = document.createElement('button');
-    btnDeny.textContent = '拒绝';
-    btnDeny.className = 'ext-btn-deny';
-    btnDeny.onclick = function () {
-      injectKeystrokeToExternal(s.pid, 'n');
-    };
+      // 拒绝按钮
+      const btnDeny = document.createElement('button');
+      btnDeny.textContent = '拒绝';
+      btnDeny.className = 'ext-btn-deny';
+      btnDeny.onclick = function () {
+        injectKeystrokeToExternal(s.pid, 'n');
+      };
+      actions.appendChild(btnDeny);
+    }
 
-    // 接管按钮
+    // 接管按钮 — 所有会话都可以接管
     const btnTakeover = document.createElement('button');
     btnTakeover.textContent = '接管';
     btnTakeover.className = 'ext-btn-takeover';
     btnTakeover.onclick = function () {
       takeOverExternalSession(s.sessionId);
     };
-
-    actions.appendChild(btnAllow);
-    actions.appendChild(btnDeny);
     actions.appendChild(btnTakeover);
 
     div.appendChild(info);
@@ -784,19 +892,32 @@ function renderExternalSessions(sessions) {
 
 function injectKeystrokeToExternal(pid, text) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'inject_permission', pid: pid, text: text }));
-  appendDiv('→ 向 PID ' + pid + ' 发送: ' + text, 'cmd-line');
 
-  // 将输入框切换为"注入模式"，方便继续输入文本
-  inputEl.placeholder = '输入要发送给 PID ' + pid + ' 的文本...';
+  // 如果有实际文本才发送注入指令（空文本仅用于进入注入模式）
+  if (text && text.trim()) {
+    ws.send(JSON.stringify({ type: 'inject_permission', pid: pid, text: text }));
+    appendDiv('→ 向 PID ' + pid + ' 发送: ' + text, 'cmd-line');
+  }
+
+  // 切换到注入模式 — 后续发送的消息会注入到此外部进程
+  inputEl.placeholder = '注入模式 → PID ' + pid + '...';
   inputEl.classList.add('warn-mode');
-  // 临时修改发送行为
   inputEl._injectPid = pid;
+}
+
+function clearInjectMode() {
+  if (inputEl._injectPid) {
+    delete inputEl._injectPid;
+    inputEl.placeholder = '输入指令...';
+    inputEl.classList.remove('warn-mode');
+  }
 }
 
 function takeOverExternalSession(externalSessionId) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   if (!confirm('确认接管会话 ' + externalSessionId.slice(0, 8) + '... 吗？\n\n接管后可在手机上继续对话。')) return;
+  // 接管前先清除 inject 模式
+  clearInjectMode();
   ws.send(JSON.stringify({ type: 'take_over_session', externalSessionId: externalSessionId }));
   appendDiv('→ 正在接管会话 ' + externalSessionId.slice(0, 8) + '...', 'cmd-line');
   btnSend.disabled = true;
@@ -825,14 +946,36 @@ sendMessage = function() {
   originalSendMessage();
 };
 
-// Reset inject mode when input is cleared
-inputEl.addEventListener('input', function() {
+// Reset inject mode only when user explicitly clears input AND blurs
+inputEl.addEventListener('blur', function() {
   if (!inputEl.value.trim() && inputEl._injectPid) {
-    delete inputEl._injectPid;
-    inputEl.placeholder = '输入指令...';
-    inputEl.classList.remove('warn-mode');
+    // Don't auto-clear — user might be composing with IME
+    // Only clear if they deliberately leave empty input
   }
 });
+
+// Double-tap empty input to exit inject mode
+inputEl.addEventListener('dblclick', function() {
+  if (!inputEl.value.trim() && inputEl._injectPid) {
+    clearInjectMode();
+    appendDiv('✕ 已退出注入模式', 'answer-line');
+  }
+});
+
+// Explicit exit via long press (800ms)
+let injectExitTimer = null;
+inputEl.addEventListener('touchstart', function() {
+  if (inputEl._injectPid) {
+    injectExitTimer = setTimeout(() => {
+      if (!inputEl.value.trim()) {
+        clearInjectMode();
+        appendDiv('✕ 已退出注入模式', 'answer-line');
+      }
+    }, 800);
+  }
+});
+inputEl.addEventListener('touchend', () => clearTimeout(injectExitTimer));
+inputEl.addEventListener('touchmove', () => clearTimeout(injectExitTimer));
 
 // ===== INIT =====
 connect(null);
